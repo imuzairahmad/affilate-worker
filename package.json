@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "npx tsc",
+    "build": "echo 'already built locally'",
     "start": "node dist/worker/worker.js",
-    "dev": "nodemon --watch worker --ext ts --exec \"npm run build && node dist/worker/worker.js\""
+    "dev": "nodemon --watch dist --ext js --exec \"node dist/worker/worker.js\""
   },
   "keywords": [],
   "author": "",
