@@ -36,11 +36,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const dotenv = __importStar(require("dotenv"));
+const path_1 = __importDefault(require("path"));
+dotenv.config({
+    path: path_1.default.resolve(__dirname, "../../.env"),
+});
 const bullmq_1 = require("bullmq");
 const axios_1 = __importDefault(require("axios"));
 const redis_1 = require("./redis");
-const dotenv = __importStar(require("dotenv"));
-dotenv.config();
 console.log("✅ Worker started");
 new bullmq_1.Worker("product-scrape", async (job) => {
     const { url, affiliateLink, from } = job.data;

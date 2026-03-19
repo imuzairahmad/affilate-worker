@@ -1,9 +1,13 @@
+import * as dotenv from "dotenv";
+import path from "path";
+
+dotenv.config({
+  path: path.resolve(__dirname, "../../.env"),
+});
+
 import { Worker } from "bullmq";
 import axios from "axios";
 import { redisConnection } from "./redis";
-import * as dotenv from "dotenv";
-
-dotenv.config();
 
 console.log("✅ Worker started");
 

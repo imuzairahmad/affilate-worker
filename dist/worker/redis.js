@@ -32,12 +32,24 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.redisConnection = void 0;
 const dotenv = __importStar(require("dotenv"));
-dotenv.config();
+const path_1 = __importDefault(require("path"));
+dotenv.config({
+    path: path_1.default.resolve(__dirname, "../.env"),
+});
 if (!process.env.REDIS_URL)
     throw new Error("REDIS_URL not defined");
+console.log("ENV:", process.env.REDIS_URL);
+const redisUrl = process.env.REDIS_URL;
+if (!redisUrl) {
+    console.error("❌ REDIS_URL missing");
+    process.exit(1); // better than crash
+}
 exports.redisConnection = {
     url: process.env.REDIS_URL,
 };
