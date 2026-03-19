@@ -45,7 +45,7 @@ console.log("✅ Worker started");
 new bullmq_1.Worker("product-scrape", async (job) => {
     const { url, affiliateLink, from } = job.data;
     try {
-        const res = await axios_1.default.post(`${process.env.NEXT_PUBLIC_SITE_URL}/api/products/process`, { url, affiliateLink, from }, { headers: { "x-api-key": process.env.WORKER_SECRET } });
+        const res = await axios_1.default.post(`${process.env.SITE_URL}/api/products/process`, { url, affiliateLink, from }, { headers: { "x-api-key": process.env.WORKER_SECRET } });
         console.log("✅ Product processed:", res.data);
     }
     catch (err) {
