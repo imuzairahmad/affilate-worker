@@ -40,11 +40,10 @@ exports.redisConnection = void 0;
 const dotenv = __importStar(require("dotenv"));
 const path_1 = __importDefault(require("path"));
 dotenv.config({
-    path: path_1.default.resolve(__dirname, "../.env"),
+    path: path_1.default.resolve(__dirname, "../../.env"),
 });
 if (!process.env.REDIS_URL)
     throw new Error("REDIS_URL not defined");
-console.log("ENV:", process.env.REDIS_URL);
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {
     console.error("❌ REDIS_URL missing");

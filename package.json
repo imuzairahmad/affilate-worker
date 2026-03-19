@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npx tsc",
     "start": "node dist/worker/worker.js",
     "dev": "nodemon --watch worker --ext ts --exec \"npm run build && node dist/worker/worker.js\""
   },
