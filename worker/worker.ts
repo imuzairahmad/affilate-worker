@@ -14,7 +14,7 @@ new Worker(
 
     try {
       const res = await axios.post(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/api/products/process`,
+        `${process.env.SITE_URL}/api/products/process`,
         { url, affiliateLink, from },
         { headers: { "x-api-key": process.env.WORKER_SECRET! } },
       );
