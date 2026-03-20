@@ -36,6 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+// worker.ts
 const dotenv = __importStar(require("dotenv"));
 const path_1 = __importDefault(require("path"));
 dotenv.config({
@@ -43,16 +44,60 @@ dotenv.config({
 });
 const bullmq_1 = require("bullmq");
 const axios_1 = __importDefault(require("axios"));
+const puppeteer_1 = __importDefault(require("puppeteer"));
 const redis_1 = require("./redis");
 console.log("✅ Worker started");
 new bullmq_1.Worker("product-scrape", async (job) => {
     const { url, affiliateLink, from } = job.data;
+    let browser;
     try {
-        const res = await axios_1.default.post(`${process.env.SITE_URL}/api/products/process`, { url, affiliateLink, from }, { headers: { "x-api-key": process.env.WORKER_SECRET } });
+        console.log(`🚀 Scraping: ${url}`);
+        browser = await puppeteer_1.default.launch({
+            headless: true,
+            args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        });
+        const page = await browser.newPage();
+        await page.goto(url, {
+            waitUntil: "networkidle2",
+            timeout: 60000,
+        });
+        // ✅ SCRAPE DATA
+        const scraped = await page.evaluate(() => {
+            return {
+                title: document.querySelector("title")?.innerText || "",
+                pros: [],
+                cons: [],
+            };
+        });
+        console.log("✅ Scraped:", scraped);
+        // ✅ SEND TO API
+        const res = await axios_1.default.post(`${process.env.SITE_URL}/api/products/process`, {
+            url,
+            affiliateLink,
+            from,
+            scraped,
+        }, {
+            headers: { "x-api-key": process.env.WORKER_SECRET },
+        });
         console.log("✅ Product processed:", res.data);
+        return res.data;
     }
     catch (err) {
-        console.error("❌ API call failed:", err.response?.data || err.message);
+        console.error("❌ Worker failed:", err.message);
+        const totalAttempts = job.opts.attempts ?? 1;
+        // ✅ only send on FINAL attempt
+        if (job.attemptsMade === totalAttempts - 1) {
+            await axios_1.default.post(`${process.env.SITE_URL}/api/send-fail`, { from }, {
+                headers: { "x-api-key": process.env.WORKER_SECRET },
+            });
+        }
         throw err;
     }
-}, { connection: redis_1.redisConnection });
+    finally {
+        if (browser)
+            await browser.close();
+    }
+}, {
+    connection: redis_1.redisConnection,
+    maxStalledCount: 1,
+});
