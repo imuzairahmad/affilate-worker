@@ -1,4 +1,3 @@
-// worker.ts
 import * as dotenv from "dotenv";
 import path from "path";
 
@@ -8,45 +7,57 @@ dotenv.config({
 
 import { Worker } from "bullmq";
 import axios from "axios";
-import puppeteer from "puppeteer";
+import * as cheerio from "cheerio";
 import { redisConnection } from "./redis";
 
-console.log("✅ Worker started");
+console.log("✅ Worker (Cheerio) started");
+
+function scrapeAmazonHTML(html: string) {
+  const $ = cheerio.load(html);
+
+  const title = $("#productTitle").text().trim() || $("title").text().trim();
+
+  const pros = $("#feature-bullets li span")
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter((t) => t.length > 10)
+    .slice(0, 5);
+
+  return {
+    title,
+    pros,
+    cons: [],
+  };
+}
 
 new Worker(
   "product-scrape",
   async (job) => {
     const { url, affiliateLink, from } = job.data;
 
-    let browser;
-
     try {
-      console.log(`🚀 Scraping: ${url}`);
+      console.log(`🚀 Scraping (Cheerio): ${url}`);
 
-      browser = await puppeteer.launch({
-        headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      const response = await axios.get(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
       });
 
-      const page = await browser.newPage();
+      const html = response.data;
 
-      await page.goto(url, {
-        waitUntil: "networkidle2",
-        timeout: 60000,
-      });
-
-      // ✅ SCRAPE DATA
-      const scraped = await page.evaluate(() => {
-        return {
-          title: document.querySelector("title")?.innerText || "",
-          pros: [],
-          cons: [],
-        };
-      });
+      const scraped = scrapeAmazonHTML(html);
 
       console.log("✅ Scraped:", scraped);
 
-      // ✅ SEND TO API
+      // ❌ Guard against bad scrape
+      if (!scraped.title || scraped.title === "Amazon.com") {
+        throw new Error("Invalid product title (blocked or bad HTML)");
+      }
+
+      // ✅ Send to API
       const res = await axios.post(
         `${process.env.SITE_URL}/api/products/process`,
         {
@@ -68,7 +79,6 @@ new Worker(
 
       const totalAttempts = job.opts.attempts ?? 1;
 
-      // ✅ only send on FINAL attempt
       if (job.attemptsMade === totalAttempts - 1) {
         await axios.post(
           `${process.env.SITE_URL}/api/send-fail`,
@@ -80,8 +90,6 @@ new Worker(
       }
 
       throw err;
-    } finally {
-      if (browser) await browser.close();
     }
   },
   {

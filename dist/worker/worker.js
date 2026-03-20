@@ -36,7 +36,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-// worker.ts
 const dotenv = __importStar(require("dotenv"));
 const path_1 = __importDefault(require("path"));
 dotenv.config({
@@ -44,33 +43,41 @@ dotenv.config({
 });
 const bullmq_1 = require("bullmq");
 const axios_1 = __importDefault(require("axios"));
-const puppeteer_1 = __importDefault(require("puppeteer"));
+const cheerio = __importStar(require("cheerio"));
 const redis_1 = require("./redis");
-console.log("✅ Worker started");
+console.log("✅ Worker (Cheerio) started");
+function scrapeAmazonHTML(html) {
+    const $ = cheerio.load(html);
+    const title = $("#productTitle").text().trim() || $("title").text().trim();
+    const pros = $("#feature-bullets li span")
+        .map((_, el) => $(el).text().trim())
+        .get()
+        .filter((t) => t.length > 10)
+        .slice(0, 5);
+    return {
+        title,
+        pros,
+        cons: [],
+    };
+}
 new bullmq_1.Worker("product-scrape", async (job) => {
     const { url, affiliateLink, from } = job.data;
-    let browser;
     try {
-        console.log(`🚀 Scraping: ${url}`);
-        browser = await puppeteer_1.default.launch({
-            headless: true,
-            args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        console.log(`🚀 Scraping (Cheerio): ${url}`);
+        const response = await axios_1.default.get(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
         });
-        const page = await browser.newPage();
-        await page.goto(url, {
-            waitUntil: "networkidle2",
-            timeout: 60000,
-        });
-        // ✅ SCRAPE DATA
-        const scraped = await page.evaluate(() => {
-            return {
-                title: document.querySelector("title")?.innerText || "",
-                pros: [],
-                cons: [],
-            };
-        });
+        const html = response.data;
+        const scraped = scrapeAmazonHTML(html);
         console.log("✅ Scraped:", scraped);
-        // ✅ SEND TO API
+        // ❌ Guard against bad scrape
+        if (!scraped.title || scraped.title === "Amazon.com") {
+            throw new Error("Invalid product title (blocked or bad HTML)");
+        }
+        // ✅ Send to API
         const res = await axios_1.default.post(`${process.env.SITE_URL}/api/products/process`, {
             url,
             affiliateLink,
@@ -85,17 +92,12 @@ new bullmq_1.Worker("product-scrape", async (job) => {
     catch (err) {
         console.error("❌ Worker failed:", err.message);
         const totalAttempts = job.opts.attempts ?? 1;
-        // ✅ only send on FINAL attempt
         if (job.attemptsMade === totalAttempts - 1) {
             await axios_1.default.post(`${process.env.SITE_URL}/api/send-fail`, { from }, {
                 headers: { "x-api-key": process.env.WORKER_SECRET },
             });
         }
         throw err;
-    }
-    finally {
-        if (browser)
-            await browser.close();
     }
 }, {
     connection: redis_1.redisConnection,
