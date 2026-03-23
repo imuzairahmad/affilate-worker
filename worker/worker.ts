@@ -1,72 +1,35 @@
 // worker.ts
-import * as dotenv from "dotenv";
-import path from "path";
-dotenv.config({ path: path.resolve(__dirname, "../../.env") });
-
-import { Worker } from "bullmq";
-import puppeteer from "puppeteer";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { redisConnection } from "./redis";
 
 // =========================
-// ✅ Hybrid fetch HTML
+// ✅ Fetch HTML (Axios only)
 // =========================
 async function fetchHTML(url: string): Promise<string> {
-  try {
-    // First attempt with Axios (fast)
-    const res = await axios.get(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      validateStatus: () => true, // don't throw on non-200
-    });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 15000);
 
-    console.log("🌐 Axios status:", res.status);
+  const res = await axios.get(url, {
+    signal: controller.signal,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    validateStatus: () => true,
+  });
 
-    if (res.status === 200) return res.data;
+  console.log("🌐 Status:", res.status);
 
-    throw new Error("Axios blocked or non-200 response");
-  } catch (err) {
-    console.log("⚠️ Axios failed → using Puppeteer");
-
-    // Puppeteer fallback
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-infobars",
-      ],
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-    );
-    await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
-
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 90000,
-    });
-
-    // Wait for title selector to appear
-    await page
-      .waitForSelector("#productTitle", { timeout: 30000 })
-      .catch(() => {});
-
-    const html = await page.content();
-    await browser.close();
-    return html;
+  if (res.status !== 200) {
+    throw new Error("Failed to fetch page");
   }
+
+  return res.data;
 }
 
 // =========================
-// ✅ Scrape HTML
+// ✅ Scraper
 // =========================
 function scrapeAmazonHTML(html: string) {
   const $ = cheerio.load(html);
@@ -90,72 +53,76 @@ function scrapeAmazonHTML(html: string) {
 }
 
 // =========================
-// ✅ Worker
+// ✅ Worker Function
 // =========================
-new Worker(
-  "product-scrape",
-  async (job) => {
-    const { url, affiliateLink, from } = job.data;
+export async function processProductJob(data: {
+  url: string;
+  affiliateLink: string;
+  from: string;
+}) {
+  const { url, affiliateLink, from } = data;
 
-    try {
-      console.log(`🚀 Scraping product: ${url}`);
+  try {
+    console.log("🚀 Worker started:", url);
 
-      const html = await fetchHTML(url);
-      const scraped = scrapeAmazonHTML(html);
-
-      console.log("✅ Scraped data:", scraped);
-
-      // Strong validation
-      if (
-        !scraped.title ||
-        scraped.title.toLowerCase().includes("amazon.com") ||
-        scraped.title.toLowerCase().includes("robot")
-      ) {
-        throw new Error("Blocked or invalid product page");
-      }
-
-      // -------------------------
-      // Send to API for processing
-      // -------------------------
-      const res = await axios.post(
-        `${process.env.SITE_URL}/api/products/process`,
-        {
-          url,
-          affiliateLink,
-          from,
-          scraped,
-        },
-        {
-          headers: {
-            "x-api-key": process.env.WORKER_SECRET!,
-          },
-        },
-      );
-
-      console.log("✅ Product processed:", res.data);
-      return res.data;
-    } catch (err: any) {
-      console.error("❌ Worker failed:", err.message);
-
-      // Notify after final attempt
-      const totalAttempts = job.opts.attempts ?? 1;
-      if (job.attemptsMade === totalAttempts - 1) {
-        await axios.post(
-          `${process.env.SITE_URL}/api/send-fail`,
-          { from },
-          {
-            headers: { "x-api-key": process.env.WORKER_SECRET! },
-          },
-        );
-      }
-
-      throw err;
+    // ✅ Validate Amazon URL
+    if (!url.includes("/dp/") && !url.includes("/gp/product/")) {
+      throw new Error("Invalid Amazon product link");
     }
-  },
-  {
-    connection: redisConnection,
-    maxStalledCount: 1,
-  },
-);
 
-console.log("✅ Worker started (Hybrid Amazon Scraper)");
+    // ✅ Retry logic
+    let scraped;
+    for (let i = 0; i < 2; i++) {
+      try {
+        const html = await fetchHTML(url);
+        scraped = scrapeAmazonHTML(html);
+
+        if (scraped.title && scraped.title !== "Amazon.com") {
+          break;
+        }
+
+        throw new Error("Invalid scraped content");
+      } catch (err) {
+        if (i === 1) throw err;
+        console.log("🔁 Retry scraping...");
+      }
+    }
+
+    console.log("✅ Scraped:", scraped);
+
+    // ✅ Call API
+    const res = await axios.post(
+      `${process.env.SITE_URL}/api/products/process`,
+      {
+        url,
+        affiliateLink,
+        from,
+        scraped,
+      },
+      {
+        headers: {
+          "x-api-key": process.env.WORKER_SECRET!,
+        },
+      },
+    );
+
+    console.log("✅ API success:", res.data);
+
+    return res.data;
+  } catch (err: any) {
+    console.error("❌ Worker failed:", err.message);
+
+    // ❗ Notify failure
+    await axios.post(
+      `${process.env.SITE_URL}/api/send-fail`,
+      { from },
+      {
+        headers: {
+          "x-api-key": process.env.WORKER_SECRET!,
+        },
+      },
+    );
+
+    throw err;
+  }
+}
